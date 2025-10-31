@@ -98,17 +98,17 @@ const Login = () => {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 via-background to-secondary/10 p-4">
       <Card className="w-full max-w-md p-8 shadow-elevated">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center mb-4 overflow-hidden">
-            {profileData?.logo_url ? (
-              <img 
-                src={profileData.logo_url} 
-                alt="Logo" 
-                className="w-full h-full object-cover"
-              />
-            ) : (
+          {profileData?.logo_url ? (
+            <img 
+              src={profileData.logo_url} 
+              alt="Logo" 
+              className="w-16 h-16 object-contain mb-4"
+            />
+          ) : (
+            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center mb-4">
               <Package className="w-8 h-8 text-primary-foreground" />
-            )}
-          </div>
+            </div>
+          )}
           <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
             {profileData?.nome_estabelecimento || "Dashboard Delivery"}
           </h1>
