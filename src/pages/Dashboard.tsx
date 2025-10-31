@@ -46,6 +46,7 @@ const Dashboard = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [userEmail, setUserEmail] = useState("");
   const [establishmentName, setEstablishmentName] = useState("Dashboard Delivery");
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [endDate, setEndDate] = useState<Date | undefined>(undefined);
 
@@ -61,12 +62,16 @@ const Dashboard = () => {
       // Fetch user profile
       const { data: profile } = await supabase
         .from("profiles")
-        .select("nome_estabelecimento")
+        .select("nome_estabelecimento, logo_url")
         .eq("id", session.user.id)
         .maybeSingle();
       
       if (profile?.nome_estabelecimento) {
         setEstablishmentName(profile.nome_estabelecimento);
+      }
+      
+      if (profile?.logo_url) {
+        setLogoUrl(profile.logo_url);
       }
       
       await fetchOrders();
@@ -207,8 +212,16 @@ const Dashboard = () => {
       <header className="border-b bg-card shadow-sm sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-              <Package className="w-6 h-6 text-primary-foreground" />
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center overflow-hidden">
+              {logoUrl ? (
+                <img 
+                  src={logoUrl} 
+                  alt="Logo" 
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <Package className="w-6 h-6 text-primary-foreground" />
+              )}
             </div>
             <div>
               <h1 className="text-xl font-bold">{establishmentName}</h1>

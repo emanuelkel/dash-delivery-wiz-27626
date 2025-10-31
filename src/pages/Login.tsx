@@ -21,20 +21,38 @@ const Login = () => {
   } | null>(null);
 
   useEffect(() => {
+    // Buscar dados do perfil do admin para exibir na tela de login
+    const fetchAdminProfile = async () => {
+      try {
+        // Buscar o primeiro usuário admin
+        const { data: adminRole } = await (supabase as any)
+          .from("user_roles")
+          .select("user_id")
+          .eq("role", "admin")
+          .limit(1)
+          .single();
+
+        if (adminRole) {
+          const { data: profile } = await (supabase as any)
+            .from("profiles")
+            .select("nome_estabelecimento, logo_url")
+            .eq("id", adminRole.user_id)
+            .single();
+
+          if (profile) {
+            setProfileData(profile);
+          }
+        }
+      } catch (error) {
+        console.error("Erro ao buscar perfil do admin:", error);
+      }
+    };
+
+    fetchAdminProfile();
+    
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        // Buscar dados do perfil antes de redirecionar
-        const { data: profile } = await (supabase as any)
-          .from("profiles")
-          .select("nome_estabelecimento, logo_url")
-          .eq("id", session.user.id)
-          .single();
-
-        if (profile) {
-          setProfileData(profile);
-        }
-        
         navigate("/dashboard");
       }
     };
@@ -44,17 +62,6 @@ const Login = () => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         if (session) {
-          // Buscar dados do perfil
-          const { data: profile } = await (supabase as any)
-            .from("profiles")
-            .select("nome_estabelecimento, logo_url")
-            .eq("id", session.user.id)
-            .single();
-
-          if (profile) {
-            setProfileData(profile);
-          }
-          
           navigate("/dashboard");
         }
       }
