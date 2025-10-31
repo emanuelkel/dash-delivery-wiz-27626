@@ -43,66 +43,56 @@ export const CreateUserForm = () => {
     setLoading(true);
 
     try {
-      // Criar usuário
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            nome_estabelecimento: nomeEstabelecimento,
-          },
-        },
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        throw new Error("Sessão não encontrada");
+      }
+
+      let logoFileBase64 = null;
+      let logoFileName = null;
+
+      // Converter logo para base64 se houver
+      if (logoFile) {
+        const reader = new FileReader();
+        logoFileBase64 = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => {
+            const base64 = (reader.result as string).split(',')[1];
+            resolve(base64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(logoFile);
+        });
+        
+        const fileExt = logoFile.name.split(".").pop();
+        logoFileName = `${Date.now()}.${fileExt}`;
+      }
+
+      // Chamar Edge Function para criar usuário
+      const { data, error } = await supabase.functions.invoke('create-user', {
+        body: {
+          email,
+          password,
+          nome_estabelecimento: nomeEstabelecimento,
+          role: role,
+          logo_file: logoFileBase64,
+          logo_filename: logoFileName
+        }
       });
 
-      if (authError) throw authError;
+      if (error) throw error;
+      if (data.error) throw new Error(data.error);
 
-      if (authData.user) {
-        let logoUrl = null;
-
-        // Upload da logo se houver
-        if (logoFile) {
-          const fileExt = logoFile.name.split(".").pop();
-          const fileName = `${authData.user.id}-${Date.now()}.${fileExt}`;
-          
-          const { error: uploadError } = await supabase.storage
-            .from("logos")
-            .upload(fileName, logoFile);
-
-          if (uploadError) throw uploadError;
-
-          const { data: { publicUrl } } = supabase.storage
-            .from("logos")
-            .getPublicUrl(fileName);
-
-          logoUrl = publicUrl;
-
-          // Atualizar perfil com logo
-          const { error: updateError } = await (supabase as any)
-            .from("profiles")
-            .update({ logo_url: logoUrl })
-            .eq("id", authData.user.id);
-
-          if (updateError) throw updateError;
-        }
-
-        // Adicionar role ao usuário
-        const { error: roleError } = await (supabase as any)
-          .from("user_roles")
-          .insert({
-            user_id: authData.user.id,
-            role: role,
-          });
-
-        if (roleError) throw roleError;
-
-        toast.success("Usuário criado com sucesso!");
-        setEmail("");
-        setPassword("");
-        setNomeEstabelecimento("");
-        setRole("user");
-        setLogoFile(null);
-        setLogoPreview(null);
-      }
+      toast.success("Usuário criado com sucesso!");
+      setEmail("");
+      setPassword("");
+      setNomeEstabelecimento("");
+      setRole("user");
+      setLogoFile(null);
+      setLogoPreview(null);
+      
+      // Recarregar lista de usuários
+      window.location.reload();
     } catch (error: any) {
       console.error("Erro ao criar usuário:", error);
       toast.error("Erro ao criar usuário: " + error.message);
