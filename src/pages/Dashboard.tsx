@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { client } from "@/lib/directus";
-import { readMe, readItems } from "@directus/sdk";
+import { readMe, readItems, updateMe } from "@directus/sdk"; // Adicionado updateMe
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import MetricCard from "@/components/dashboard/MetricCard";
@@ -19,7 +19,10 @@ import {
   LogOut,
   Clock,
   CreditCard,
-  CalendarIcon
+  CalendarIcon,
+  Power, // Ícone novo
+  PlayCircle, // Ícone novo
+  StopCircle // Ícone novo
 } from "lucide-react";
 import {
   BarChart,
@@ -40,6 +43,8 @@ interface ExtendedUser {
   id: string;
   email?: string;
   collection_name?: string;
+  bot_ativo?: boolean; // Novo campo
+  n8n_workflow_id?: string; // Novo campo
 }
 
 const Dashboard = () => {
@@ -52,47 +57,38 @@ const Dashboard = () => {
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [endDate, setEndDate] = useState<Date | undefined>(undefined);
   const [activeCollection, setActiveCollection] = useState<string | null>(null);
+  
+  // Estado do Bot
+  const [botActive, setBotActive] = useState(false);
+  const [updatingBot, setUpdatingBot] = useState(false);
 
   useEffect(() => {
     const checkSession = async () => {
       try {
-        // 1. Busca dados básicos do usuário (Email e ID)
+        // 1. Busca dados do usuário INCLUINDO o status do bot
         const user = await client.request(readMe({
-          fields: ['id', 'email', 'collection_name'] 
+          fields: ['id', 'email', 'collection_name', 'bot_ativo', 'n8n_workflow_id'] 
         })) as ExtendedUser;
 
         if (!user) throw new Error("Usuário não encontrado");
 
         setUserEmail(user.email || "");
+        setBotActive(user.bot_ativo || false); // Seta o estado inicial do botão
 
-        // 2. Busca o Perfil na tabela 'crm_profiles'
-        // Assumindo que você tem permissão para ver apenas o SEU perfil
+        // 2. Busca o Perfil
         try {
-          const profiles = await client.request(readItems('crm_profiles', {
-            limit: 1
-          }));
-
+          const profiles = await client.request(readItems('crm_profiles', { limit: 1 }));
           if (profiles && profiles.length > 0) {
             const profile = profiles[0];
-            // Ajuste aqui se o nome do campo no banco for diferente
             setEstablishmentName(profile.nome_estabelecimento || "Nome Indefinido");
-            
-           const imageId = profile.logo || profile.logo_url;
-
-            if (imageId) {
-               // Montamos a URL completa usando o ID
-               setLogoUrl(`${client.url}assets/${imageId}`);
-            }
-          
-          } else {
-            setEstablishmentName("Perfil não configurado");
+            const imageId = profile.logo || profile.logo_url;
+            if (imageId) setLogoUrl(`${client.url}assets/${imageId}`);
           }
         } catch (error) {
-          console.error("Erro ao buscar crm_profiles:", error);
-          setEstablishmentName("Erro ao carregar perfil");
+          console.error("Erro perfil", error);
         }
         
-        // 3. Carrega os pedidos
+        // 3. Carrega pedidos
         if (user.collection_name) {
             setActiveCollection(user.collection_name);
             await fetchOrders(user.collection_name);
@@ -102,7 +98,6 @@ const Dashboard = () => {
         }
 
       } catch (error) {
-        toast.error("Sessão expirada.");
         navigate("/login");
       }
     };
@@ -112,27 +107,51 @@ const Dashboard = () => {
 
   const fetchOrders = async (tableName: string) => {
     try {
-      const data = await client.request(readItems(tableName, {
-        sort: ["-date_created"] 
-      }));
+      const data = await client.request(readItems(tableName, { sort: ["-date_created"] }));
       setOrders(data || []);
     } catch (error: any) {
-      console.error("Error fetching orders:", error);
-      toast.error("Erro ao carregar pedidos.");
+      console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSignOut = async () => {
+  // --- NOVA FUNÇÃO: Alternar Bot ---
+  const toggleBot = async () => {
+    setUpdatingBot(true);
+    const newState = !botActive; // Inverte o estado atual
+
     try {
-      await client.logout();
-      navigate("/login");
+      // Atualiza o status no Directus
+      await client.request(updateMe({
+        bot_ativo: newState
+      }));
+
+      setBotActive(newState);
+      
+      if (newState) {
+        toast.success("Automação ativada com sucesso!");
+      } else {
+        toast.info("Automação pausada.");
+      }
+      
     } catch (error) {
-      console.error(error);
+      console.error("Erro ao alterar bot:", error);
+      toast.error("Erro ao alterar status da automação.");
+      // Reverte o estado visual se der erro
+      setBotActive(!newState);
+    } finally {
+      setUpdatingBot(false);
     }
   };
+  // ---------------------------------
 
+  const handleSignOut = async () => {
+    await client.logout();
+    navigate("/login");
+  };
+
+  // ... (Filtros e Cálculos permanecem iguais) ...
   const filteredOrders = orders.filter(order => {
     const dateField = order.date_created || order.data_pedido;
     if (!dateField) return false;
@@ -142,7 +161,6 @@ const Dashboard = () => {
     return isAfterStart && isBeforeEnd;
   });
 
-  // Função auxiliar para somar valores (evita erro de string)
   const parseCurrency = (value: any) => {
     if (!value) return 0;
     if (typeof value === 'number') return value;
@@ -159,17 +177,6 @@ const Dashboard = () => {
     order => (order.status?.toLowerCase() === 'concluído' || order.status?.toLowerCase() === 'concluido') && order.data_entrega
   );
   
-  const totalDeliveryTime = completedOrders.reduce((sum, order) => {
-    const dateField = order.date_created || order.data_pedido;
-    const orderTime = new Date(dateField).getTime();
-    const deliveryTime = new Date(order.data_entrega).getTime();
-    return sum + ((deliveryTime - orderTime) / (1000 * 60));
-  }, 0);
-
-  const averageDeliveryTime = completedOrders.length > 0 
-    ? Math.round(totalDeliveryTime / completedOrders.length) 
-    : 0;
-
   const deliveryTimeRanges = completedOrders.reduce((acc: any, order) => {
     const dateField = order.date_created || order.data_pedido;
     const diffInMinutes = (new Date(order.data_entrega).getTime() - new Date(dateField).getTime()) / (1000 * 60);
@@ -177,7 +184,6 @@ const Dashboard = () => {
     acc[range] = (acc[range] || 0) + 1;
     return acc;
   }, {});
-
   const deliveryTimeData = Object.entries(deliveryTimeRanges).map(([name, value]) => ({ name, pedidos: value }));
 
   const paymentMethods = filteredOrders.reduce((acc: any, order) => {
@@ -185,58 +191,75 @@ const Dashboard = () => {
     acc[method] = (acc[method] || 0) + 1;
     return acc;
   }, {});
-
   const paymentData = Object.entries(paymentMethods).map(([name, value]) => ({ name, value }));
 
   const deliveryDrivers = filteredOrders.reduce((acc: any, order) => {
     if (order.entregador) acc[order.entregador] = (acc[order.entregador] || 0) + 1;
     return acc;
   }, {});
+  const driverData = Object.entries(deliveryDrivers).map(([name, value]) => ({ name, entregas: value })).sort((a: any, b: any) => b.entregas - a.entregas).slice(0, 5);
 
-  const driverData = Object.entries(deliveryDrivers)
-    .map(([name, value]) => ({ name, entregas: value }))
-    .sort((a: any, b: any) => (b.entregas as number) - (a.entregas as number))
-    .slice(0, 5);
+  const totalDeliveryTime = completedOrders.reduce((sum, order) => {
+    const dateField = order.date_created || order.data_pedido;
+    return sum + ((new Date(order.data_entrega).getTime() - new Date(dateField).getTime()) / (1000 * 60));
+  }, 0);
+  const averageDeliveryTime = completedOrders.length > 0 ? Math.round(totalDeliveryTime / completedOrders.length) : 0;
 
   const COLORS = ["hsl(var(--primary))", "hsl(var(--secondary))", "hsl(var(--accent))", "hsl(var(--chart-4))", "hsl(var(--chart-5))"];
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Carregando...</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><p>Carregando...</p></div>;
 
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card shadow-sm sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {logoUrl ? (
-              <img src={logoUrl} alt="Logo" className="w-10 h-10 object-contain rounded-md" />
-            ) : (
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-                <Package className="w-6 h-6 text-primary-foreground" />
-              </div>
-            )}
+            {logoUrl ? <img src={logoUrl} alt="Logo" className="w-10 h-10 object-contain rounded-md" /> : <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center"><Package className="w-6 h-6 text-primary" /></div>}
             <div>
               <h1 className="text-xl font-bold">{establishmentName}</h1>
-              <p className="text-sm text-muted-foreground">{userEmail}</p>
+              <p className="text-xs text-muted-foreground">{userEmail}</p>
             </div>
           </div>
-          <Button onClick={handleSignOut} variant="outline" size="sm">
-            <LogOut className="w-4 h-4 mr-2" /> Sair
-          </Button>
+          
+          <div className="flex items-center gap-2">
+            {/* BOTÃO DE ATIVAR/DESATIVAR O FLUXO */}
+            <Button 
+              variant={botActive ? "default" : "destructive"} 
+              size="sm"
+              onClick={toggleBot}
+              disabled={updatingBot}
+              className={cn(
+                "transition-all duration-300",
+                botActive ? "bg-green-600 hover:bg-green-700" : "bg-red-100 text-red-600 hover:bg-red-200 border border-red-200"
+              )}
+            >
+              {updatingBot ? (
+                "..."
+              ) : botActive ? (
+                <>
+                  <PlayCircle className="w-4 h-4 mr-2" />
+                  Sistema Ativo
+                </>
+              ) : (
+                <>
+                  <StopCircle className="w-4 h-4 mr-2" />
+                  Sistema Pausado
+                </>
+              )}
+            </Button>
+
+            <Button onClick={handleSignOut} variant="ghost" size="icon" className="text-muted-foreground">
+              <LogOut className="w-5 h-5" />
+            </Button>
+          </div>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8 space-y-8">
+        {/* Filtros e restante do conteúdo igual ao anterior */}
         <Card className="p-6">
-          <div className="flex flex-wrap items-center gap-4">
+            {/* ... Conteúdo dos Filtros (igual ao anterior) ... */}
+            <div className="flex flex-wrap items-center gap-4">
             <h2 className="text-lg font-semibold">Filtrar por período:</h2>
             <Popover>
               <PopoverTrigger asChild>
@@ -268,7 +291,7 @@ const Dashboard = () => {
           </div>
         </Card>
 
-        {/* Dados do Dashboard */}
+        {/* Resto dos Cards e Gráficos ... */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
           <MetricCard title="Total de Pedidos" value={totalOrders} icon={Package} color="primary" />
           <MetricCard title="Receita Total" value={`R$ ${totalRevenue.toFixed(2)}`} icon={DollarSign} color="success" />
@@ -278,7 +301,8 @@ const Dashboard = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {driverData.length > 0 && (
+            {/* Gráficos... (Copiados do anterior) */}
+             {driverData.length > 0 && (
             <Card className="p-6">
               <h2 className="text-xl font-bold mb-4">Top Entregadores</h2>
               <ResponsiveContainer width="100%" height={300}>
@@ -312,7 +336,7 @@ const Dashboard = () => {
             </ResponsiveContainer>
           </Card>
         </div>
-
+        
         <OrdersTable orders={filteredOrders} />
       </main>
     </div>
