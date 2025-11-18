@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { client } from "@/lib/directus"; // Importa nosso novo cliente
+import { login, readMe, readItems } from "@directus/sdk"; // Métodos do SDK
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-
 import { Package } from "lucide-react";
 
 const Login = () => {
@@ -21,53 +21,37 @@ const Login = () => {
   } | null>(null);
 
   useEffect(() => {
-    // Buscar dados do perfil do admin para exibir na tela de login
-    const fetchAdminProfile = async () => {
+    // 1. Verifica se já existe um usuário logado
+    const checkSession = async () => {
       try {
-        // Buscar o primeiro usuário admin
-        const { data: adminRole } = await (supabase as any)
-          .from("user_roles")
-          .select("user_id")
-          .eq("role", "admin")
-          .limit(1)
-          .single();
+        // Tenta buscar os dados do usuário atual ('me')
+        await client.request(readMe());
+        // Se não der erro, o usuário está logado
+        navigate("/dashboard");
+      } catch (error) {
+        // Se der erro, o usuário não está logado, continuamos na tela de login
+      }
+    };
 
-        if (adminRole) {
-          const { data: profile } = await (supabase as any)
-            .from("profiles")
-            .select("nome_estabelecimento, logo_url")
-            .eq("id", adminRole.user_id)
-            .single();
-
-          if (profile) {
-            setProfileData(profile);
-          }
+    // 2. Busca dados visuais do perfil (Logo, Nome)
+    // Nota: No Directus, certifique-se de ter uma coleção 'profiles' com permissão de leitura pública
+    // ou ajuste para buscar de onde preferir.
+    const fetchPublicProfile = async () => {
+      try {
+        const result = await client.request(readItems('profiles', { limit: 1 }));
+        if (result && result[0]) {
+          setProfileData({
+            nome_estabelecimento: result[0].nome_estabelecimento,
+            logo_url: result[0].logo_url
+          });
         }
       } catch (error) {
-        console.error("Erro ao buscar perfil do admin:", error);
+        console.log("Não foi possível carregar perfil público ou coleção inexistente.");
       }
     };
 
-    fetchAdminProfile();
-    
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        navigate("/dashboard");
-      }
-    };
-    
     checkSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        if (session) {
-          navigate("/dashboard");
-        }
-      }
-    );
-
-    return () => subscription.unsubscribe();
+    fetchPublicProfile();
   }, [navigate]);
 
   const handleSignIn = async (e: React.FormEvent) => {
@@ -75,24 +59,26 @@ const Login = () => {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        toast.error("Erro ao fazer login: " + error.message);
-      } else {
-        toast.success("Login realizado com sucesso!");
-        navigate("/dashboard");
-      }
+      // Realiza o login no Directus
+      await client.login(email, password);
+      
+      toast.success("Login realizado com sucesso!");
+      navigate("/dashboard");
+      
     } catch (error: any) {
-      toast.error("Erro ao fazer login");
+      console.error(error);
+      // Tratamento básico de erro
+      const message = error?.errors?.[0]?.message || "Verifique suas credenciais.";
+      
+      if (message.includes("INVALID_CREDENTIALS")) {
+        toast.error("E-mail ou senha incorretos.");
+      } else {
+        toast.error("Erro ao entrar: " + message);
+      }
     } finally {
       setLoading(false);
     }
   };
-
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 via-background to-secondary/10 p-4">

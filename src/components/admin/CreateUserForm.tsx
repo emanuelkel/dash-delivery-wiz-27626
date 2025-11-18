@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { client } from "@/lib/directus";
+import { createUser, uploadFiles, readRoles } from "@directus/sdk";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +12,7 @@ export const CreateUserForm = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nomeEstabelecimento, setNomeEstabelecimento] = useState("");
-  const [role, setRole] = useState<"admin" | "user">("user");
+  const [roleName, setRoleName] = useState<"Administrator" | "User">("User"); // Nomes padrão do Directus (capitalizados)
   const [loading, setLoading] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
@@ -31,6 +32,7 @@ export const CreateUserForm = () => {
     }
 
     setLogoFile(file);
+    // Preview local da imagem
     const reader = new FileReader();
     reader.onloadend = () => {
       setLogoPreview(reader.result as string);
@@ -43,59 +45,63 @@ export const CreateUserForm = () => {
     setLoading(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        throw new Error("Sessão não encontrada");
-      }
+      let logoId = null;
 
-      let logoFileBase64 = null;
-      let logoFileName = null;
-
-      // Converter logo para base64 se houver
+      // 1. Upload da Logo (se houver)
       if (logoFile) {
-        const reader = new FileReader();
-        logoFileBase64 = await new Promise<string>((resolve, reject) => {
-          reader.onloadend = () => {
-            const base64 = (reader.result as string).split(',')[1];
-            resolve(base64);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(logoFile);
-        });
-        
-        const fileExt = logoFile.name.split(".").pop();
-        logoFileName = `${Date.now()}.${fileExt}`;
+        const formData = new FormData();
+        formData.append('title', `Logo - ${nomeEstabelecimento}`);
+        formData.append('file', logoFile);
+
+        const fileResult = await client.request(uploadFiles(formData));
+        // O Directus retorna um objeto ou array, garantimos o ID
+        logoId = fileResult.id || fileResult; 
       }
 
-      // Chamar Edge Function para criar usuário
-      const { data, error } = await supabase.functions.invoke('create-user', {
-        body: {
-          email,
-          password,
-          nome_estabelecimento: nomeEstabelecimento,
-          role: role,
-          logo_file: logoFileBase64,
-          logo_filename: logoFileName
+      // 2. Buscar o ID da Role baseada no nome selecionado
+      // Nota: No Directus, as roles têm IDs (UUIDs). Precisamos buscar o ID correspondente ao nome.
+      // Certifique-se que no seu Directus existem Roles com nome "Administrator" e "User" (ou adapte aqui)
+      const roles = await client.request(readRoles({
+        filter: {
+          name: { _eq: roleName }
         }
-      });
+      }));
 
-      if (error) throw error;
-      if (data.error) throw new Error(data.error);
+      if (!roles || roles.length === 0) {
+        throw new Error(`Função (Role) '${roleName}' não encontrada no Directus.`);
+      }
+
+      const roleId = roles[0].id;
+
+      // 3. Criar o Usuário
+      await client.request(createUser({
+        email: email,
+        password: password,
+        role: roleId,
+        first_name: nomeEstabelecimento, // Usando o campo de nome padrão para o estabelecimento
+        avatar: logoId, // Vincula a imagem enviada ao avatar do usuário
+        // Se você criou um campo personalizado 'nome_estabelecimento' no directus_users, descomente abaixo:
+        // nome_estabelecimento: nomeEstabelecimento 
+      }));
 
       toast.success("Usuário criado com sucesso!");
+      
+      // Limpar formulário
       setEmail("");
       setPassword("");
       setNomeEstabelecimento("");
-      setRole("user");
+      setRoleName("User");
       setLogoFile(null);
       setLogoPreview(null);
       
-      // Recarregar lista de usuários
+      // Recarregar página para atualizar lista
       window.location.reload();
+
     } catch (error: any) {
       console.error("Erro ao criar usuário:", error);
-      toast.error("Erro ao criar usuário: " + error.message);
+      // Tenta extrair mensagem de erro amigável do Directus
+      const msg = error?.errors?.[0]?.message || error.message || "Erro desconhecido";
+      toast.error("Erro ao criar usuário: " + msg);
     } finally {
       setLoading(false);
     }
@@ -143,13 +149,14 @@ export const CreateUserForm = () => {
         </div>
         <div className="space-y-2">
           <Label htmlFor="role">Tipo de Acesso</Label>
-          <Select value={role} onValueChange={(value: "admin" | "user") => setRole(value)}>
+          <Select value={roleName} onValueChange={(value: "Administrator" | "User") => setRoleName(value)}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="user">Usuário</SelectItem>
-              <SelectItem value="admin">Administrador</SelectItem>
+              {/* Ajuste os valores abaixo conforme os nomes REAIS das suas Roles no Directus */}
+              <SelectItem value="User">Usuário</SelectItem>
+              <SelectItem value="Administrator">Administrador</SelectItem>
             </SelectContent>
           </Select>
         </div>

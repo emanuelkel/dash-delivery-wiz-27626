@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { client } from "@/lib/directus";
+import { readUsers, deleteUser } from "@directus/sdk";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,48 +18,32 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-interface UserWithRole {
+interface DirectusUser {
   id: string;
+  first_name?: string; // Usamos este campo para o Nome do Estabelecimento
   email?: string;
-  nome_estabelecimento?: string;
-  role?: string;
+  role?: {
+    id: string;
+    name: string;
+  } | null;
 }
 
 export const UsersList = () => {
-  const [users, setUsers] = useState<UserWithRole[]>([]);
+  const [users, setUsers] = useState<DirectusUser[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchUsers = async () => {
     try {
-      const { data: profiles, error: profilesError } = await (supabase as any)
-        .from("profiles")
-        .select("id, nome_estabelecimento");
+      // Buscamos usuários e pedimos para expandir o campo 'role' para pegar o nome dela
+      const result = await client.request(readUsers({
+        fields: ['id', 'first_name', 'email', 'role.name'],
+        sort: ['-date_created'] // Mais recentes primeiro
+      }));
 
-      if (profilesError) throw profilesError;
-
-      // Buscar roles e emails para cada usuário
-      const usersWithData = await Promise.all(
-        (profiles || []).map(async (profile: any) => {
-          const { data: roleData } = await (supabase as any)
-            .from("user_roles")
-            .select("role")
-            .eq("user_id", profile.id)
-            .maybeSingle();
-
-          // Buscar email do auth (precisamos usar a API admin)
-          // Como não temos acesso direto ao auth.users, vamos mostrar apenas o ID
-          return {
-            id: profile.id,
-            nome_estabelecimento: profile.nome_estabelecimento,
-            role: roleData?.role || "user",
-          };
-        })
-      );
-
-      setUsers(usersWithData);
+      setUsers(result as DirectusUser[]);
     } catch (error) {
       console.error("Erro ao carregar usuários:", error);
-      toast.error("Erro ao carregar usuários");
+      toast.error("Erro ao carregar lista de usuários.");
     } finally {
       setLoading(false);
     }
@@ -70,21 +55,22 @@ export const UsersList = () => {
 
   const handleDeleteUser = async (userId: string) => {
     try {
-      // Deletar role
-      const { error: roleError } = await (supabase as any)
-        .from("user_roles")
-        .delete()
-        .eq("user_id", userId);
+      await client.request(deleteUser(userId));
 
-      if (roleError) throw roleError;
-
-      // O perfil será deletado automaticamente via CASCADE
       toast.success("Usuário removido com sucesso");
-      fetchUsers();
+      
+      // Atualiza a lista removendo o item localmente para ser mais rápido
+      setUsers(current => current.filter(u => u.id !== userId));
     } catch (error: any) {
       console.error("Erro ao deletar usuário:", error);
-      toast.error("Erro ao deletar usuário: " + error.message);
+      const msg = error?.errors?.[0]?.message || "Erro desconhecido";
+      toast.error("Erro ao deletar usuário: " + msg);
     }
+  };
+
+  // Helper para verificar se é admin (flexível para maiúsculas/minúsculas)
+  const isAdmin = (roleName?: string) => {
+    return roleName?.toLowerCase().includes('admin');
   };
 
   if (loading) {
@@ -97,6 +83,7 @@ export const UsersList = () => {
         <TableHeader>
           <TableRow>
             <TableHead>Nome do Estabelecimento</TableHead>
+            <TableHead>Email</TableHead>
             <TableHead>Tipo</TableHead>
             <TableHead className="w-[100px]">Ações</TableHead>
           </TableRow>
@@ -104,7 +91,7 @@ export const UsersList = () => {
         <TableBody>
           {users.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={3} className="text-center text-muted-foreground">
+              <TableCell colSpan={4} className="text-center text-muted-foreground">
                 Nenhum usuário encontrado
               </TableCell>
             </TableRow>
@@ -112,11 +99,15 @@ export const UsersList = () => {
             users.map((user) => (
               <TableRow key={user.id}>
                 <TableCell className="font-medium">
-                  {user.nome_estabelecimento || "Sem nome"}
+                  {/* Exibimos first_name pois foi lá que salvamos o nome do estabelecimento */}
+                  {user.first_name || "Sem nome"}
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {user.email}
                 </TableCell>
                 <TableCell>
-                  <Badge variant={user.role === "admin" ? "default" : "secondary"}>
-                    {user.role === "admin" ? "Admin" : "Usuário"}
+                  <Badge variant={isAdmin(user.role?.name) ? "default" : "secondary"}>
+                    {user.role?.name || "Usuário"}
                   </Badge>
                 </TableCell>
                 <TableCell>

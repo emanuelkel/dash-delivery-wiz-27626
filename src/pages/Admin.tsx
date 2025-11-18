@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { client } from "@/lib/directus"; // Cliente Directus
+import { readMe } from "@directus/sdk"; // Função para ler dados do próprio usuário
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,29 +19,21 @@ const Admin = () => {
   useEffect(() => {
     const checkAdmin = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (!session) {
+        // 1. Busca dados do usuário atual, incluindo o nome da Role
+        const user = await client.request(readMe({
+          fields: ['role.name']
+        }));
+
+        if (!user) {
           navigate("/login");
           return;
         }
 
-        // Verificar se o usuário é admin
-        const { data: roleData, error: roleError } = await (supabase as any)
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", session.user.id)
-          .eq("role", "admin")
-          .maybeSingle();
-
-        if (roleError) {
-          console.error("Erro ao verificar role:", roleError);
-          toast.error("Erro ao verificar permissões");
-          navigate("/dashboard");
-          return;
-        }
-
-        if (!roleData) {
+        // 2. Verifica se é Admin
+        // O Directus tem uma Role padrão chamada "Administrator", mas verificamos qualquer coisa com "Admin"
+        const roleName = user.role?.name || "";
+        
+        if (!roleName.toLowerCase().includes("admin")) {
           toast.error("Acesso negado. Área restrita a administradores.");
           navigate("/dashboard");
           return;
@@ -48,7 +41,8 @@ const Admin = () => {
 
         setIsAdmin(true);
       } catch (error) {
-        console.error("Erro:", error);
+        console.error("Erro de autenticação:", error);
+        // Se der erro (ex: 401 Unauthorized), manda pro login
         navigate("/login");
       } finally {
         setLoading(false);
@@ -59,15 +53,21 @@ const Admin = () => {
   }, [navigate]);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    navigate("/login");
+    try {
+      await client.logout();
+      navigate("/login");
+      toast.success("Saiu com sucesso.");
+    } catch (error) {
+      console.error("Erro ao sair:", error);
+    }
   };
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center">
-          <p className="text-muted-foreground">Carregando...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Verificando permissões...</p>
         </div>
       </div>
     );

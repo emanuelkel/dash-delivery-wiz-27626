@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { client } from "@/lib/directus"; // Nosso cliente
+import { readMe, updateMe, uploadFiles } from "@directus/sdk"; // Funções do SDK
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,24 +12,27 @@ export const ProfileSettings = () => {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null); // Mantemos para referência, se necessário
 
   useEffect(() => {
     const loadProfile = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      try {
+        const user = await client.request(readMe({
+          fields: ['id', 'first_name', 'avatar']
+        }));
 
-      setUserId(session.user.id);
+        if (!user) return;
 
-      const { data: profile } = await (supabase as any)
-        .from("profiles")
-        .select("nome_estabelecimento, logo_url")
-        .eq("id", session.user.id)
-        .single();
-
-      if (profile) {
-        setNomeEstabelecimento(profile.nome_estabelecimento || "");
-        setLogoUrl(profile.logo_url);
+        setUserId(user.id);
+        setNomeEstabelecimento(user.first_name || "");
+        
+        // Constrói a URL da logo se ela existir
+        if (user.avatar) {
+          setLogoUrl(`${client.url}assets/${user.avatar}`);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar perfil:", error);
+        toast.error("Não foi possível carregar seu perfil.");
       }
     };
 
@@ -38,9 +42,8 @@ export const ProfileSettings = () => {
   const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     try {
       setUploading(true);
-
       const file = event.target.files?.[0];
-      if (!file || !userId) return;
+      if (!file) return;
 
       // Validar tipo de arquivo
       if (!file.type.startsWith("image/")) {
@@ -54,36 +57,28 @@ export const ProfileSettings = () => {
         return;
       }
 
-      const fileExt = file.name.split(".").pop();
-      const fileName = `${userId}-${Date.now()}.${fileExt}`;
-      const filePath = `${fileName}`;
+      // 1. Fazer upload do arquivo para o Directus
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('title', `Logo - ${nomeEstabelecimento || userId}`);
 
-      // Upload para o bucket logos
-      const { error: uploadError, data } = await supabase.storage
-        .from("logos")
-        .upload(filePath, file, { upsert: true });
+      const fileResult = await client.request(uploadFiles(formData));
+      const fileId = fileResult.id || fileResult; // Pega o ID do arquivo
 
-      if (uploadError) throw uploadError;
+      // 2. Atualizar o campo 'avatar' do usuário logado
+      await client.request(updateMe({
+        avatar: fileId
+      }));
 
-      // Obter URL pública
-      const { data: { publicUrl } } = supabase.storage
-        .from("logos")
-        .getPublicUrl(filePath);
-
-      setLogoUrl(publicUrl);
-      
-      // Atualizar no perfil
-      const { error: updateError } = await (supabase as any)
-        .from("profiles")
-        .update({ logo_url: publicUrl })
-        .eq("id", userId);
-
-      if (updateError) throw updateError;
+      // 3. Atualizar a URL local para o preview
+      const newLogoUrl = `${client.url}assets/${fileId}`;
+      setLogoUrl(newLogoUrl);
 
       toast.success("Logo atualizada com sucesso!");
     } catch (error: any) {
       console.error("Erro ao fazer upload:", error);
-      toast.error("Erro ao fazer upload da logo: " + error.message);
+      const msg = error?.errors?.[0]?.message || "Erro desconhecido";
+      toast.error("Erro ao fazer upload da logo: " + msg);
     } finally {
       setUploading(false);
     }
@@ -94,17 +89,16 @@ export const ProfileSettings = () => {
 
     setSaving(true);
     try {
-      const { error } = await (supabase as any)
-        .from("profiles")
-        .update({ nome_estabelecimento: nomeEstabelecimento })
-        .eq("id", userId);
-
-      if (error) throw error;
+      // Atualiza o 'first_name' (Nome do Estabelecimento) do usuário logado
+      await client.request(updateMe({
+        first_name: nomeEstabelecimento
+      }));
 
       toast.success("Configurações salvas com sucesso!");
     } catch (error: any) {
       console.error("Erro ao salvar:", error);
-      toast.error("Erro ao salvar configurações: " + error.message);
+      const msg = error?.errors?.[0]?.message || "Erro desconhecido";
+      toast.error("Erro ao salvar configurações: " + msg);
     } finally {
       setSaving(false);
     }
