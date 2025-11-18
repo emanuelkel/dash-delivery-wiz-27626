@@ -23,9 +23,10 @@ interface Order {
   id: number;
   nome: string;
   produto: string;
-  valor_do_produto: number;
+  valor_do_produto: number | string; // Aceita number ou string
   forma_de_pagamento: string;
-  data_pedido: string;
+  date_created?: string; // Opcional pois pode vir como data_pedido
+  data_pedido?: string;  // Nome que criamos no banco
   status?: string;
 }
 
@@ -37,11 +38,40 @@ const OrdersTable = ({ orders }: OrdersTableProps) => {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
 
+  // Função segura para formatar moeda (trata string e number)
+  const formatCurrency = (value: string | number) => {
+    if (!value) return "R$ 0,00";
+    
+    let numValue: number;
+
+    if (typeof value === 'string') {
+      // Remove 'R$', espaços e troca vírgula por ponto
+      const cleanString = value.replace('R$', '').replace(/\s/g, '').replace(',', '.');
+      numValue = parseFloat(cleanString);
+    } else {
+      numValue = value;
+    }
+
+    if (isNaN(numValue)) return "R$ 0,00";
+
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    }).format(numValue);
+  };
+
   const filteredOrders = orders.filter((order) => {
     const matchesStatus = statusFilter === "all" || order.status === statusFilter;
+    const searchLower = searchTerm.toLowerCase();
+    
+    // Proteção contra campos undefined/null
+    const nome = order.nome || "";
+    const produto = order.produto || "";
+    
     const matchesSearch = 
-      order.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.produto.toLowerCase().includes(searchTerm.toLowerCase());
+      nome.toLowerCase().includes(searchLower) ||
+      produto.toLowerCase().includes(searchLower);
+      
     return matchesStatus && matchesSearch;
   });
 
@@ -115,12 +145,13 @@ const OrdersTable = ({ orders }: OrdersTableProps) => {
                 filteredOrders.map((order) => (
                   <TableRow key={order.id}>
                     <TableCell className="font-medium">#{order.id}</TableCell>
-                    <TableCell>{order.nome}</TableCell>
-                    <TableCell className="max-w-xs truncate">{order.produto}</TableCell>
-                    <TableCell>R$ {order.valor_do_produto.toFixed(2)}</TableCell>
-                    <TableCell>{order.forma_de_pagamento}</TableCell>
+                    <TableCell>{order.nome || "Cliente"}</TableCell>
+                    <TableCell className="max-w-xs truncate">{order.produto || "-"}</TableCell>
+                    <TableCell>{formatCurrency(order.valor_do_produto)}</TableCell>
+                    <TableCell>{order.forma_de_pagamento || "-"}</TableCell>
                     <TableCell>
-                      {new Date(order.data_pedido).toLocaleDateString("pt-BR")}
+                      {/* Tenta usar date_created OU data_pedido */}
+                      {new Date(order.date_created || order.data_pedido || Date.now()).toLocaleDateString("pt-BR")}
                     </TableCell>
                     <TableCell>
                       <Badge className={getStatusColor(order.status)}>
